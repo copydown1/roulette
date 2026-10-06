@@ -17,27 +17,21 @@ export function getBetParams(betMode, predictedSet, payout) {
 }
 
 // Compute dose for next bet
-// totalYield = cumulative P&L for this bet mode's live spins
+// Net on a hit = dose * (payout + 1 - (n-1)) — winning stake returned + payout - other n-1 stakes lost
 export function computeDose(totalYield, baseBet, n, payout) {
   if (totalYield >= 0) return baseBet;
-  // dose needed: one hit covers all losses + one base-bet profit
-  // net on hit = dose * (payout - (n-1)) = dose * (payout - n + 1)
-  // Need: dose * (payout - n + 1) + totalYield >= baseBet
-  // dose >= (baseBet - totalYield) / (payout - n + 1)
-  // Simplified (as per spec): dose = ceil((-totalYield / (payout - (n-1))) * 100) / 100
-  const raw = (-totalYield) / (payout - (n - 1));
+  const netPerHit = payout + 1 - (n - 1);   // = payout - n + 2
+  const raw = (-totalYield) / netPerHit;
   return Math.max(baseBet, Math.ceil(raw * 100) / 100);
 }
 
-// Compute net result of a round
-// isHit = whether the actual spin landed in the predicted set
+// Compute net result of a round.
+// Win: payout on the hitting pocket + that stake returned - (n-1) losing stakes
+// Lose: all n stakes lost
 export function computeNet(isHit, dose, n, payout) {
-  if (n === 1) {
-    // Outside bet (dozens / columns): payout = 2
-    return isHit ? dose * payout : -dose;
-  }
-  // Inside bets (numbers / sectors)
-  return isHit ? dose * (payout - (n - 1)) : -(dose * n);
+  return isHit
+    ? dose * (payout + 1 - (n - 1))   // = dose * (payout - n + 2)
+    : -(dose * n);
 }
 
 // Compute cumulative P&L from live spins.

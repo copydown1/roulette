@@ -7,7 +7,7 @@ export default function BloodMoneyPanel({ dose, totalYield, bankroll, baseBet, n
   const doseColor    = recovering ? 'text-gold' : 'text-white';
 
   // net return on a single hit: dose × (payout - (n-1))
-  const hitReturn    = dose * (payout - (n - 1));
+  const hitReturn    = dose * (payout + 1 - (n - 1));
 
   return (
     <div className="panel p-3 space-y-2">
