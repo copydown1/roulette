@@ -29,6 +29,7 @@ export function parseSpins(text) {
       && BET_MODES.includes(s.betMode)
       && (s.win == null || typeof s.win === 'boolean')
       && isNumOrNull(s.net) && isNumOrNull(s.dose)
+      && (s.newDealer == null || typeof s.newDealer === 'boolean')
       && (s.predicted == null || (Array.isArray(s.predicted) && s.predicted.every(isPocket)));
     if (!ok) throw new Error(`Spin #${i + 1} in that file is not valid.`);
     return {
@@ -41,6 +42,7 @@ export function parseSpins(text) {
       mode: s.mode,
       betMode: s.betMode,
       created_at: typeof s.created_at === 'string' ? s.created_at : new Date().toISOString(),
+      ...(s.newDealer === true && { newDealer: true }),
     };
   });
 }

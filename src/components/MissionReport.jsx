@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { RotateCcw, Undo2, Download, Upload } from 'lucide-react';
 import { money, signedMoney } from '../lib/format';
+import { pickCount } from '../lib/prediction';
 
 function Tile({ label, value, sub, tone = 'text-white', className = '' }) {
   return (
@@ -12,7 +13,7 @@ function Tile({ label, value, sub, tone = 'text-white', className = '' }) {
   );
 }
 
-export default function MissionReport({ allStats, activeBetMode, totalSpins, onUndo, onReset, onExport, onImport }) {
+export default function MissionReport({ allStats, activeBetMode, coverage, totalSpins, onUndo, onReset, onExport, onImport }) {
   const s = allStats[activeBetMode] ?? {};
   const [confirmReset, setConfirmReset] = useState(false);
   const fileRef = useRef(null);
@@ -72,7 +73,7 @@ export default function MissionReport({ allStats, activeBetMode, totalSpins, onU
         <Tile
           label="Hit rate"
           value={s.betSpins ? `${(s.hitRate * 100).toFixed(1)}%` : '—'}
-          sub={`${s.wins ?? 0}W · ${s.losses ?? 0}L`}
+          sub={`${s.wins ?? 0}W · ${s.losses ?? 0}L · chance ${((s.chance ?? pickCount(activeBetMode, coverage) / 37) * 100).toFixed(1)}%`}
         />
         <Tile
           label="Bet spins"

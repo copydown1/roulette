@@ -23,7 +23,7 @@ function Notice({ tone, children }) {
   );
 }
 
-export default function BloodMoneyPanel({ dose, wantedDose, hasPrediction, totalYield, bankroll, n, payout, mode }) {
+export default function BloodMoneyPanel({ dose, wantedDose, hasPrediction, totalYield, bankroll, n, payout, mode, unit }) {
   const bankrollNow = bankroll + totalYield;
   const recovering  = totalYield < 0;
   const broke       = hasPrediction && dose <= 0 && wantedDose > 0;
@@ -67,7 +67,7 @@ export default function BloodMoneyPanel({ dose, wantedDose, hasPrediction, total
               }`}>
                 {money(dose)}
               </div>
-              <div className="text-[10px] text-muted mt-1 font-mono">{n > 1 ? 'per position' : 'on the group'}</div>
+              <div className="text-[10px] text-muted mt-1 font-mono">{unit}</div>
             </div>
             {n > 1 && dose > 0 && (
               <div className="pb-4 font-mono text-label">
@@ -107,7 +107,7 @@ export default function BloodMoneyPanel({ dose, wantedDose, hasPrediction, total
       {capped && (
         <Notice tone="loss">
           <AlertTriangle size={11} className="inline -mt-0.5 mr-1" />
-          Recovery needs {money(wantedDose)}{n > 1 ? ' per position' : ''}, but only {money(bankrollNow)} is left.
+          Recovery needs {money(wantedDose)} {unit}{n > 1 ? ` (${money(wantedDose * n)} in total)` : ''}, but only {money(bankrollNow)} is left.
           Bet capped at what you can cover — one hit returns {money(hitReturn)} and won't fully recover
           the {money(totalYield)} deficit.
         </Notice>

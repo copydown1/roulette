@@ -35,28 +35,18 @@ function Pocket({ n, isPredicted, isLast, onClick }) {
 }
 
 export default function RouletteTable({ predictedSet, lastNumber, onSpin, betMode, predResult }) {
-  const bestDozen = predResult?.result?.type === 'dozens'  ? predResult.result.ranked[0] : null;
-  const bestCol   = predResult?.result?.type === 'columns' ? predResult.result.ranked[0] : null;
+  // Labels of the dozens / columns being bet on (one or two, depending on coverage)
+  const result = predResult?.result;
+  const chosen = new Set(
+    result?.type === betMode ? result.ranked.slice(0, result.take ?? 1).map(g => g.label) : []
+  );
+  const ring = on => (on ? 'border-gold bg-gold/10 text-gold' : 'border-border/50 text-label');
 
   // Horizontal: rowIdx 0=COL3, 1=COL2, 2=COL1
-  function colRing(rowIdx) {
-    if (betMode !== 'columns' || !bestCol) return 'border-border/50 text-label';
-    const match = COLUMNS[rowIdx].numbers.some(n => bestCol.numbers.includes(n));
-    return match ? 'border-gold bg-gold/10 text-gold' : 'border-border/50 text-label';
-  }
-
-  function dozenRing(d) {
-    if (betMode !== 'dozens' || !bestDozen) return 'border-border/50 text-label';
-    const match = d.numbers.some(n => bestDozen.numbers.includes(n));
-    return match ? 'border-gold bg-gold/10 text-gold' : 'border-border/50 text-label';
-  }
-
-  // Vertical: check column by numbers array
-  function colRingByNums(colNums) {
-    if (betMode !== 'columns' || !bestCol) return 'border-border/50 text-label';
-    const match = colNums.some(n => bestCol.numbers.includes(n));
-    return match ? 'border-gold bg-gold/10 text-gold' : 'border-border/50 text-label';
-  }
+  const colRing = rowIdx => ring(betMode === 'columns' && chosen.has(COLUMNS[rowIdx].label));
+  const dozenRing = d => ring(betMode === 'dozens' && chosen.has(d.label));
+  // Vertical layout passes the column object itself
+  const colRingByCol = col => ring(betMode === 'columns' && chosen.has(col.label));
 
   const zeroRing = lastNumber === 0
     ? 'ring-2 ring-[#e8e8e8]'
@@ -165,7 +155,7 @@ export default function RouletteTable({ predictedSet, lastNumber, onSpin, betMod
             {V_COLS.map(col => (
               <div
                 key={col.label}
-                className={`flex items-center justify-center py-1.5 rounded text-[9px] font-bold tracking-wide2 uppercase border ${colRingByNums(col.numbers)}`}
+                className={`flex items-center justify-center py-1.5 rounded text-[9px] font-bold tracking-wide2 uppercase border ${colRingByCol(col)}`}
               >
                 {col.label}
               </div>

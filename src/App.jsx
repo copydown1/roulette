@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSpins } from './hooks/useSpins';
-import { computePrediction, getPredictedSet, computeWeights } from './lib/prediction';
+import { computePrediction, getPredictedSet, computeWeights, COVERAGE_OPTIONS, DEFAULT_COVERAGE } from './lib/prediction';
 import { getBetParams, computeDose, affordableDose, computeNet, computeYield, computeStats } from './lib/bankroll';
 import { downloadSpins, parseSpins } from './lib/backup';
 
@@ -15,10 +15,14 @@ import BloodMoneyPanel from './components/BloodMoneyPanel';
 import TableSettings from './components/TableSettings';
 import MissionReport from './components/MissionReport';
 import SignalCalibration from './components/SignalCalibration';
+import BoardImport, { BoardImportHint } from './components/BoardImport';
+import WheelCheck from './components/WheelCheck';
+import { useReplay } from './hooks/useReplay';
 
 const LS_MODE     = 'ro_mode';
 const LS_BETMODE  = 'ro_betMode';
 const LS_SETTINGS = 'ro_settings';
+const LS_COVERAGE = 'ro_coverage';
 
 const DEFAULT_SETTINGS = { baseBet: 0.10, payout: 35, bankroll: 100 };
 
@@ -27,23 +31,60 @@ function loadLS(key, def) {
 }
 function saveLS(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
 
-export default function App() {
-  const { spins, addSpin, undoLast, resetSession, replaceSpins } = useSpins();
+// Saved coverage per mode, falling back to the default for anything missing or not a valid option
+function loadCoverage() {
+  const saved = loadLS(LS_COVERAGE, {});
+  return Object.fromEntries(Object.entries(DEFAULT_COVERAGE).map(([m, d]) =>
+    [m, COVERAGE_OPTIONS[m].includes(saved?.[m]) ? saved[m] : d]));
+}
 
+const UNIT = {
+  numbers: () => 'per number',
+  sectors: () => 'per number',
+  dozens:  n => (n > 1 ? 'per dozen' : 'on the dozen'),
+  columns: n => (n > 1 ? 'per column' : 'on the column'),
+};
+
+export default function App() {
+  const { spins, addSpin, undoLast, resetSession, replaceSpins, appendSpins, dealerPending, toggleNewDealer } = useSpins();
+  const [boardFile, setBoardFile] = useState(null);
   const [mode, setMode]         = useState(() => loadLS(LS_MODE, 'history'));
   const [betMode, setBetMode]   = useState(() => loadLS(LS_BETMODE, 'numbers'));
+  const [coverage, setCoverage] = useState(loadCoverage);
+  const cov = coverage[betMode];
+  const replay = useReplay(spins, betMode, coverage);
+
   const [settings, setSettings] = useState(() => loadLS(LS_SETTINGS, DEFAULT_SETTINGS));
 
   useEffect(() => saveLS(LS_MODE, mode),         [mode]);
   useEffect(() => saveLS(LS_BETMODE, betMode),   [betMode]);
   useEffect(() => saveLS(LS_SETTINGS, settings), [settings]);
+  useEffect(() => saveLS(LS_COVERAGE, coverage), [coverage]);
+
+  const changeCoverage = useCallback(value => setCoverage(c => ({ ...c, [betMode]: value })), [betMode]);
+
+  // Ctrl+V a screenshot of the results board to import it — History mode only
+  useEffect(() => {
+    if (mode !== 'history') return;
+    const onPaste = e => {
+      const file = [...(e.clipboardData?.files ?? [])].find(f => f.type.startsWith('image/'));
+      if (!file) return;
+      e.preventDefault();
+      setBoardFile(file);
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [mode]);
 
   // ── Prediction ────────────────────────────────────────────────────────────────
-  const predResult   = useMemo(() => computePrediction(spins, betMode), [spins, betMode]);
+  const predResult   = useMemo(
+    () => computePrediction(spins, betMode, dealerPending, cov),
+    [spins, betMode, dealerPending, cov]
+  );
   const predictedSet = useMemo(() => getPredictedSet(predResult), [predResult]);
   const weights      = useMemo(
-    () => predResult?.weights ?? computeWeights(spins, betMode),
-    [predResult, spins, betMode]
+    () => predResult?.weights ?? computeWeights(spins, betMode, cov),
+    [predResult, spins, betMode, cov]
   );
 
   // ── Bankroll math ─────────────────────────────────────────────────────────────
@@ -51,8 +92,8 @@ export default function App() {
   const totalYield = useMemo(() => computeYield(spins), [spins]);
 
   const { n: betN, payout: betPayout } = useMemo(
-    () => getBetParams(betMode, predictedSet, settings.payout),
-    [betMode, predictedSet, settings.payout]
+    () => getBetParams(betMode, predictedSet, settings.payout, cov),
+    [betMode, predictedSet, settings.payout, cov]
   );
 
   const wantedDose = useMemo(
@@ -115,14 +156,18 @@ export default function App() {
 
           {/* ── Main column ── */}
           <div className="flex-1 min-w-0 space-y-3 sm:space-y-4">
+            {mode === 'history' && <BoardImportHint onFile={setBoardFile} />}
             {entrySurface}
 
-            <RecentSpins spins={spins} />
+            <RecentSpins spins={spins} dealerPending={dealerPending} onNewDealer={toggleNewDealer} />
 
             <PredictionBar
               predResult={predResult}
               betMode={betMode}
               spinCount={spins.length}
+              coverage={cov}
+              onCoverageChange={changeCoverage}
+              straightPayout={settings.payout}
             />
 
             <BloodMoneyPanel
@@ -134,6 +179,7 @@ export default function App() {
               n={betN}
               payout={betPayout}
               mode={mode}
+              unit={UNIT[betMode](betN)}
             />
 
             <TableSettings settings={settings} onChange={setSettings} betMode={betMode} />
@@ -144,13 +190,15 @@ export default function App() {
             <MissionReport
               allStats={allStats}
               activeBetMode={betMode}
+              coverage={cov}
               totalSpins={spins.length}
               onUndo={undoLast}
               onReset={resetSession}
               onExport={handleExport}
               onImport={handleImport}
             />
-            <SignalCalibration weights={weights} spinCount={spins.length} />
+            <SignalCalibration weights={weights} spinCount={spins.length} dealerSpins={predResult?.dealerSpins} />
+            <WheelCheck spins={spins} replay={replay} activeBetMode={betMode} />
           </div>
         </div>
 
@@ -159,15 +207,26 @@ export default function App() {
           <MissionReport
             allStats={allStats}
             activeBetMode={betMode}
+            coverage={cov}
             totalSpins={spins.length}
             onUndo={undoLast}
             onReset={resetSession}
             onExport={handleExport}
             onImport={handleImport}
           />
-          <SignalCalibration weights={weights} spinCount={spins.length} />
+          <SignalCalibration weights={weights} spinCount={spins.length} dealerSpins={predResult?.dealerSpins} />
+          <WheelCheck spins={spins} replay={replay} activeBetMode={betMode} />
         </div>
       </main>
+
+      {boardFile && (
+        <BoardImport
+          file={boardFile}
+          existingNumbers={spins.map(s => s.number)}
+          onClose={() => setBoardFile(null)}
+          onImport={numbers => { appendSpins(numbers, betMode); setBoardFile(null); }}
+        />
+      )}
 
       <footer className="border-t border-border px-4 py-3 text-center">
         <p className="text-[10px] text-muted max-w-xl mx-auto">

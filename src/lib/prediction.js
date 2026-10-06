@@ -23,238 +23,190 @@ export const COLUMNS = [
   { label: 'COL 1', numbers: [1,4,7,10,13,16,19,22,25,28,31,34] },
 ];
 
-const SIGNAL_NAMES = ['hot','bias','due','sector','memory','repeat','streak','signature'];
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeScores() { return new Array(37).fill(0); }
+
+// Scores → non-negative weights summing to 1 (uniform when there's nothing to go on)
+function normalize(scores) {
+  const total = scores.reduce((a, b) => a + b, 0);
+  return total > 0 ? scores.map(s => s / total) : new Array(37).fill(1 / 37);
+}
 
 export function getColor(n) {
   if (n === 0) return 'green';
   return RED.has(n) ? 'red' : 'black';
 }
 
-// ─── 8 Signals ───────────────────────────────────────────────────────────────
+// ─── Signals ─────────────────────────────────────────────────────────────────
+// Each signal sees only past spins and models a physical wheel/dealer effect.
+// None assume a number is "due" or that colour/odd-even runs carry over.
 
-function signalHot(spins) {
-  const scores = makeScores();
-  const recents = spins.slice(-36);
-  const len = recents.length;
-  if (!len) return scores;
-  recents.forEach((s, i) => {
-    const weight = 1 + (i / len) * 2;
-    scores[s.number] += weight;
-  });
-  return scores;
+// Release timing is never exact, so an observed travel distance also counts for ±2 pockets
+const OFFSET_KERNEL = [0.25, 0.5, 1, 0.5, 0.25];
+const SIGNATURE_HALF_LIFE = 40;   // spins — dealers drift
+const SIGNATURE_WINDOW = 150;
+// Spread evenly over all distances, worth ~8 spins: a new dealer's first few spins can't swing it
+const SIGNATURE_PRIOR = (8 * OFFSET_KERNEL.reduce((a, b) => a + b, 0)) / 37;
+
+// Index of the first spin by the current dealer (0 if no dealer change was marked)
+export function dealerStart(spins) {
+  for (let i = spins.length - 1; i > 0; i--) if (spins[i].newDealer) return i;
+  return 0;
 }
 
-function signalBias(spins) {
-  const scores = makeScores();
-  spins.slice(-100).forEach(s => { scores[s.number] += 0.35; });
-  return scores;
-}
-
-function signalDue(spins) {
-  const scores = makeScores();
-  const len = spins.length;
-  if (!len) return scores;
-  const lastSeen = new Array(37).fill(-1);
-  for (let i = 0; i < len; i++) lastSeen[spins[i].number] = i;
-  for (let n = 0; n <= 36; n++) {
-    const gap = len - 1 - lastSeen[n];
-    if (gap > 18) scores[n] += Math.min((gap - 18) / 18, 1) * 0.8;
+// Pockets travelled clockwise on the wheel from one result to the next, using only
+// spins by the dealer who started at index `seg` (spin t was spun by that dealer if t ≥ seg).
+// `alternating` assumes the ball direction flips every spin, so odd-indexed spins are mirrored.
+function travelHistogram(spins, alternating, seg) {
+  const hist = new Array(37).fill(SIGNATURE_PRIOR);
+  const last = spins.length - 1;
+  for (let t = Math.max(1, seg, spins.length - SIGNATURE_WINDOW); t <= last; t++) {
+    let d = (WHEEL_POS[spins[t].number] - WHEEL_POS[spins[t - 1].number] + 37) % 37;
+    if (alternating && t % 2 === 1) d = (37 - d) % 37;
+    const w = Math.pow(0.5, (last - t) / SIGNATURE_HALF_LIFE);
+    OFFSET_KERNEL.forEach((k, j) => { hist[(d + j - 2 + 37) % 37] += w * k; });
   }
-  return scores;
+  return hist;
 }
 
-function signalSector(spins) {
+function signalSignature(spins, alternating, seg) {
+  if (spins.length < 2) return normalize(makeScores());
+  const hist = travelHistogram(spins, alternating, seg);
+  const lastPos = WHEEL_POS[spins[spins.length - 1].number];
+  const flipNext = alternating && spins.length % 2 === 1;
   const scores = makeScores();
-  spins.slice(-20).forEach(s => {
+  for (let n = 0; n <= 36; n++) {
+    let d = (WHEEL_POS[n] - lastPos + 37) % 37;
+    if (flipNext) d = (37 - d) % 37;
+    scores[n] = hist[d];
+  }
+  return normalize(scores);
+}
+
+// Area of the wheel recent results have landed in, spread to wheel neighbours
+const AREA_KERNEL = [1, 0.7, 0.4, 0.15];
+function signalArea(spins) {
+  const scores = makeScores();
+  const recent = spins.slice(-30);
+  const last = recent.length - 1;
+  recent.forEach((s, i) => {
+    const w = Math.pow(0.5, (last - i) / 10);
     const pos = WHEEL_POS[s.number];
-    for (let d = 1; d <= 3; d++) {
-      scores[WHEEL[(pos - d + 37) % 37]] += 0.6 / d;
-      scores[WHEEL[(pos + d) % 37]] += 0.6 / d;
-    }
+    for (let d = -3; d <= 3; d++) scores[WHEEL[(pos + d + 37) % 37]] += w * AREA_KERNEL[Math.abs(d)];
   });
-  return scores;
+  return normalize(scores);
 }
 
-function signalMemory(spins) {
-  const scores = makeScores();
-  if (spins.length < 2) return scores;
-  const lastNum = spins[spins.length - 1].number;
-  const total = spins.length;
-  for (let i = 0; i < total - 1; i++) {
-    if (spins[i].number === lastNum) {
-      scores[spins[i + 1].number] += 0.9 * (i / total);
-    }
-  }
-  return scores;
+// Long-run pocket frequency. The +1 prior keeps it near-uniform until there is a lot of data,
+// because a real wheel bias only shows up over hundreds of spins.
+function signalBias(spins) {
+  const scores = new Array(37).fill(1);
+  spins.slice(-1000).forEach(s => { scores[s.number] += 1; });
+  return normalize(scores);
 }
 
-function signalRepeat(spins) {
-  const scores = makeScores();
-  if (spins.length < 2) return scores;
-  let repeats = 0;
-  for (let i = 1; i < spins.length; i++) {
-    if (spins[i].number === spins[i - 1].number) repeats++;
-  }
-  const repeatRate = repeats / (spins.length - 1);
-  const blind = 1 / 37;
-  if (repeatRate > blind) {
-    scores[spins[spins.length - 1].number] += (repeatRate - blind) * 20;
-  }
-  return scores;
+// fn(spins, seg): seg = index of the first spin by the dealer spinning next (only the signatures use it)
+const SIGNALS = [
+  { name: 'signature',    fn: (s, seg) => signalSignature(s, false, seg) },
+  { name: 'signatureAlt', fn: (s, seg) => signalSignature(s, true, seg) },
+  { name: 'area',         fn: s => signalArea(s) },
+  { name: 'bias',         fn: s => signalBias(s) },
+];
+
+// ─── Evidence-based weights ───────────────────────────────────────────────────
+
+// How much of the wheel a bet covers, per mode: pockets (numbers), 5-pocket wheel sectors (sectors),
+// or groups of 12 (dozens / columns). More coverage wins more often but pays less per win.
+export const COVERAGE_OPTIONS = {
+  numbers: [5, 8, 10, 12, 18],
+  sectors: [3, 4, 5],
+  dozens:  [1, 2],
+  columns: [1, 2],
+};
+export const DEFAULT_COVERAGE = { numbers: 5, sectors: 3, dozens: 1, columns: 1 };
+
+// Pockets covered by a bet
+export function pickCount(betMode, coverage = DEFAULT_COVERAGE[betMode]) {
+  if (betMode === 'numbers') return coverage;
+  if (betMode === 'sectors') return coverage * 5;
+  return coverage * 12;
 }
 
-function signalStreak(spins) {
-  const scores = makeScores();
-  if (spins.length < 2) return scores;
-
-  function getProps(n) {
-    if (n === 0) return { color: null, parity: null, range: null };
-    return {
-      color: RED.has(n) ? 'red' : 'black',
-      parity: n % 2 === 0 ? 'even' : 'odd',
-      range: n <= 18 ? 'low' : 'high',
-    };
-  }
-
-  const lastProps = getProps(spins[spins.length - 1].number);
-
-  for (const prop of ['color', 'parity', 'range']) {
-    const lastVal = lastProps[prop];
-    if (!lastVal) continue;
-
-    let runLength = 1;
-    for (let i = spins.length - 2; i >= 0; i--) {
-      if (getProps(spins[i].number)[prop] === lastVal) runLength++;
-      else break;
-    }
-
-    if (runLength >= 2) {
-      const boost = 0.25 * Math.min(runLength, 6);
-      for (let n = 1; n <= 36; n++) {
-        if (getProps(n)[prop] === lastVal) scores[n] += boost;
-      }
-    }
-  }
-  return scores;
+// How convincing a z-score is. With 4 signals tested, z ≥ 2.5 from luck alone is ~1 in 40.
+export function evidenceLevel(z) {
+  if (z >= 3.5) return 'strong';
+  if (z >= 2.5) return 'moderate';
+  if (z >= 1.5) return 'weak';
+  return 'none';
 }
 
-function signalSignature(spins) {
-  const scores = makeScores();
-  const recent = spins.slice(-16);
-  if (recent.length < 4) return scores;
-
-  const angles = recent.map(s => (2 * Math.PI * WHEEL_POS[s.number]) / 37);
-  const sumSin = angles.reduce((s, a) => s + Math.sin(a), 0);
-  const sumCos = angles.reduce((s, a) => s + Math.cos(a), 0);
-  const conc = Math.sqrt(sumSin * sumSin + sumCos * sumCos) / recent.length;
-
-  if (conc <= 0.15) return scores;
-
-  const meanAngle = Math.atan2(sumSin, sumCos);
-
-  for (let n = 0; n <= 36; n++) {
-    const pa = (2 * Math.PI * WHEEL_POS[n]) / 37;
-    let d = Math.abs(pa - meanAngle);
-    if (d > Math.PI) d = 2 * Math.PI - d;
-    scores[n] += conc * 1.2 * Math.exp(-(d * d) / (2 * 0.35 * 0.35));
-  }
-  return scores;
-}
-
-const SIGNALS = [signalHot, signalBias, signalDue, signalSector, signalMemory, signalRepeat, signalStreak, signalSignature];
-
-// ─── Self-tuning weights ──────────────────────────────────────────────────────
-
-function getTopNForMode(signalScores, betMode) {
+function getTopNForMode(signalScores, betMode, coverage) {
   switch (betMode) {
-    case 'numbers': {
+    case 'numbers':
       return [...signalScores]
         .map((s, n) => ({ n, s }))
         .sort((a, b) => b.s - a.s)
-        .slice(0, 5)
+        .slice(0, coverage)
         .map(x => x.n);
-    }
-    case 'sectors': {
-      const windows = buildSectorWindows(signalScores);
-      const selected = greedyTopWindows(windows, 3);
-      return selected.flatMap(w => w.pockets);
-    }
-    case 'dozens': {
-      const best = DOZENS.map(d => ({
-        numbers: d.numbers,
-        score: d.numbers.reduce((s, n) => s + signalScores[n], 0),
-      })).sort((a, b) => b.score - a.score)[0];
-      return best.numbers;
-    }
-    case 'columns': {
-      const best = COLUMNS.map(c => ({
-        numbers: c.numbers,
-        score: c.numbers.reduce((s, n) => s + signalScores[n], 0),
-      })).sort((a, b) => b.score - a.score)[0];
-      return best.numbers;
-    }
-    default: return [];
+    case 'sectors':
+      return greedyTopWindows(buildSectorWindows(signalScores), coverage).flatMap(w => w.pockets);
+    case 'dozens':
+      return rankGroups(DOZENS, signalScores).slice(0, coverage).flatMap(g => g.numbers);
+    case 'columns':
+      return rankGroups(COLUMNS, signalScores).slice(0, coverage).flatMap(g => g.numbers);
+    default:
+      return [];
   }
 }
 
-export function computeWeights(spins, betMode) {
-  if (spins.length < 25) {
-    return SIGNAL_NAMES.map(name => ({ name, hitRate: 0, baseline: 0, weight: 1 }));
+export const MIN_SPINS_FOR_WEIGHTS = 25;
+const EVAL_WINDOW = 200;      // most recent spins replayed
+const EVAL_HALF_LIFE = 100;   // older results count less (dealers and wheels change)
+const BASE_WEIGHT = 0.25;     // every signal's weight until it shows evidence
+
+// Replays each signal over past spins — predicting each spin only from the spins before it —
+// and scores how unlikely its hit record is by luck (z-score vs the mode's chance rate).
+// A signal only gains weight once z exceeds 1; the full 2.5 takes z = 4.
+export function computeWeights(spins, betMode, coverage = DEFAULT_COVERAGE[betMode]) {
+  const p = pickCount(betMode, coverage) / 37;
+  if (spins.length < MIN_SPINS_FOR_WEIGHTS) {
+    return SIGNALS.map(({ name }) => ({ name, hitRate: 0, baseline: p, z: 0, trials: 0, weight: BASE_WEIGHT }));
   }
 
-  const backtest = spins.slice(-150);
-  const halfLife = 60;
-  const startFrom = Math.min(25, backtest.length - 1);
+  const start = Math.max(10, spins.length - EVAL_WINDOW);
+  const last = spins.length - 1;
 
-  const nPicks = betMode === 'numbers' ? 5 : betMode === 'sectors' ? 15 : 12;
-  const baseline = nPicks / 37;
+  // segAt[i]: first spin of the dealer who spun spin i (i itself when the dealer changed right before it)
+  const segAt = [];
+  let seg = 0;
+  spins.forEach((s, i) => { if (s.newDealer) seg = i; segAt.push(seg); });
 
-  return SIGNALS.map((signal, si) => {
-    let wHits = 0, wTotal = 0;
-
-    for (let i = startFrom; i < backtest.length - 1; i++) {
-      const histSpins = backtest.slice(0, i);
-      const nextNum = backtest[i].number;
-      const ss = signal(histSpins);
-      const predicted = getTopNForMode(ss, betMode);
-      const isHit = predicted.includes(nextNum);
-      const age = backtest.length - 1 - i;
-      const dw = Math.pow(0.5, age / halfLife);
-      if (isHit) wHits += dw;
-      wTotal += dw;
+  return SIGNALS.map(({ name, fn }) => {
+    let hits = 0, sw = 0, sw2 = 0;
+    for (let i = start; i <= last; i++) {
+      const picks = getTopNForMode(fn(spins.slice(0, i), segAt[i]), betMode, coverage);
+      const w = Math.pow(0.5, (last - i) / EVAL_HALF_LIFE);
+      if (picks.includes(spins[i].number)) hits += w;
+      sw += w;
+      sw2 += w * w;
     }
-
-    const hitRate = wTotal > 0 ? wHits / wTotal : 0;
-    const weight = Math.max(0.2, Math.min(2.5, 0.5 + (hitRate / baseline - 1) * 1.5));
-
-    return { name: SIGNAL_NAMES[si], hitRate, baseline, weight };
+    const hitRate = hits / sw;
+    const z = (hits - p * sw) / Math.sqrt(p * (1 - p) * sw2);
+    const weight = BASE_WEIGHT + 0.75 * Math.min(3, Math.max(0, z - 1));
+    return { name, hitRate, baseline: p, z, trials: Math.round((sw * sw) / sw2), weight };
   });
 }
 
 // ─── Combined prediction ──────────────────────────────────────────────────────
 
-function buildCombined(spins, weights) {
+function buildCombined(spins, weights, seg) {
   const combined = makeScores();
-  SIGNALS.forEach((signal, i) => {
-    const ss = signal(spins);
-    const w = weights[i].weight;
-    for (let n = 0; n <= 36; n++) combined[n] += w * ss[n];
+  SIGNALS.forEach(({ fn }, i) => {
+    const dist = fn(spins, seg);
+    for (let n = 0; n <= 36; n++) combined[n] += weights[i].weight * dist[n];
   });
-
-  // Suppress last number if not repeat-eligible
-  if (spins.length >= 2) {
-    const lastNum = spins[spins.length - 1].number;
-    const repScore = signalRepeat(spins)[lastNum];
-    if (repScore <= 0 || combined[lastNum] <= 0) {
-      combined[lastNum] = -1;
-    }
-  }
-
-  return combined;
+  return normalize(combined);
 }
 
 // ─── Per-mode prediction results ─────────────────────────────────────────────
@@ -287,21 +239,21 @@ function greedyTopWindows(sortedWindows, n) {
   return selected;
 }
 
-function predictNumbers(combined) {
+function predictNumbers(combined, count) {
   const positives = combined
     .map((score, n) => ({ n, score }))
     .filter(x => x.score > 0)
     .sort((a, b) => b.score - a.score);
   const totalMass = positives.reduce((s, x) => s + x.score, 0);
-  return positives.slice(0, 5).map(x => ({
+  return positives.slice(0, count).map(x => ({
     number: x.n,
     confidence: totalMass > 0 ? x.score / totalMass : 0,
   }));
 }
 
-function predictSectors(combined) {
+function predictSectors(combined, count) {
   const windows = buildSectorWindows(combined);
-  const selected = greedyTopWindows(windows, 3);
+  const selected = greedyTopWindows(windows, count);
   const totalMass = selected.reduce((s, w) => s + Math.max(0, w.score), 0);
   return selected.map((w, i) => ({
     label: `SECTOR ${i + 1}`,
@@ -311,51 +263,46 @@ function predictSectors(combined) {
   }));
 }
 
-function predictDozens(combined, spins) {
-  const last12 = spins.slice(-12).map(s => s.number);
-  return DOZENS.map((d, i) => {
-    const baseScore = d.numbers.reduce((s, n) => s + combined[n], 0);
-    const recency = d.numbers.filter(n => last12.includes(n)).length;
-    return { index: i, label: d.label, numbers: d.numbers, score: baseScore + 2.5 * recency };
-  }).sort((a, b) => b.score - a.score);
-}
-
-function predictColumns(combined, spins) {
-  const last12 = spins.slice(-12).map(s => s.number);
-  return COLUMNS.map((c, i) => {
-    const baseScore = c.numbers.reduce((s, n) => s + combined[n], 0);
-    const recency = c.numbers.filter(n => last12.includes(n)).length;
-    return { index: i, label: c.label, numbers: c.numbers, score: baseScore + 2.5 * recency };
-  }).sort((a, b) => b.score - a.score);
+function rankGroups(groups, combined) {
+  return groups.map((g, i) => ({
+    index: i,
+    label: g.label,
+    numbers: g.numbers,
+    score: g.numbers.reduce((s, n) => s + combined[n], 0),
+  })).sort((a, b) => b.score - a.score);
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 
-export function computePrediction(spins, betMode) {
+// dealerPending: "New dealer" was pressed, so the next spin starts a fresh dealer with no history.
+// coverage: how much of the wheel to bet on (see COVERAGE_OPTIONS).
+export function computePrediction(spins, betMode, dealerPending = false, coverage = DEFAULT_COVERAGE[betMode]) {
   if (spins.length < 10) return null;
 
-  const weights = computeWeights(spins, betMode);
-  const combined = buildCombined(spins, weights);
+  const weights = computeWeights(spins, betMode, coverage);
+  const seg = dealerPending ? spins.length : dealerStart(spins);
+  const combined = buildCombined(spins, weights, seg);
 
   let result;
   switch (betMode) {
     case 'numbers':
-      result = { type: 'numbers', picks: predictNumbers(combined) };
+      result = { type: 'numbers', picks: predictNumbers(combined, coverage) };
       break;
     case 'sectors':
-      result = { type: 'sectors', sectors: predictSectors(combined) };
+      result = { type: 'sectors', sectors: predictSectors(combined, coverage) };
       break;
     case 'dozens':
-      result = { type: 'dozens', ranked: predictDozens(combined, spins) };
+      result = { type: 'dozens', ranked: rankGroups(DOZENS, combined), take: coverage };
       break;
     case 'columns':
-      result = { type: 'columns', ranked: predictColumns(combined, spins) };
+      result = { type: 'columns', ranked: rankGroups(COLUMNS, combined), take: coverage };
       break;
     default:
       result = null;
   }
 
-  return { combined, result, weights };
+  const strongest = weights.reduce((a, b) => (b.z > a.z ? b : a));
+  return { combined, result, weights, strongest, dealerSpins: spins.length - seg, coverage };
 }
 
 // Returns the set of predicted pocket numbers for a given prediction result
@@ -369,9 +316,8 @@ export function getPredictedSet(predResult) {
     case 'sectors':
       return new Set(result.sectors.flatMap(s => s.pockets));
     case 'dozens':
-      return new Set(result.ranked[0].numbers);
     case 'columns':
-      return new Set(result.ranked[0].numbers);
+      return new Set(result.ranked.slice(0, result.take ?? 1).flatMap(g => g.numbers));
     default:
       return new Set();
   }

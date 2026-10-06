@@ -1,16 +1,16 @@
 // Bankroll math per spec
 
-// Returns n (number of bets placed) and payout for a given bet mode
-export function getBetParams(betMode, predictedSet, payout) {
+// n = how many equal stakes are placed (at most one can win); payout = what a winning stake pays.
+// coverage is the mode's coverage setting, used only before there is a predicted set.
+export function getBetParams(betMode, predictedSet, payout, coverage) {
   switch (betMode) {
     case 'numbers':
-      return { n: predictedSet.size || 5, payout };
+      return { n: predictedSet.size || coverage || 5, payout };
     case 'sectors':
-      return { n: predictedSet.size || 15, payout };
+      return { n: predictedSet.size || (coverage || 3) * 5, payout };
     case 'dozens':
-      return { n: 1, payout: 2 };
     case 'columns':
-      return { n: 1, payout: 2 };
+      return { n: predictedSet.size ? predictedSet.size / 12 : coverage || 1, payout: 2 };
     default:
       return { n: 5, payout };
   }
@@ -83,5 +83,10 @@ export function computeStats(spins, betMode) {
 
   const totalYield = live.reduce((s, x) => s + (x.net ?? 0), 0);
 
-  return { wins, losses, betSpins, hitRate, maxDrawdown, maxStreak, totalYield };
+  // Chance of winning, averaged over the coverage of each bet actually placed
+  const chance = betSpins > 0
+    ? live.reduce((s, x) => s + (x.predicted?.length ?? 0), 0) / betSpins / 37
+    : null;
+
+  return { wins, losses, betSpins, hitRate, maxDrawdown, maxStreak, totalYield, chance };
 }
