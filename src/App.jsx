@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSpins } from './hooks/useSpins';
 import { computePrediction, getPredictedSet, computeWeights } from './lib/prediction';
-import { getBetParams, computeDose, computeNet, computeYield, computeStats } from './lib/bankroll';
+import { getBetParams, computeDose, affordableDose, computeNet, computeYield, computeStats } from './lib/bankroll';
+import { downloadSpins, parseSpins } from './lib/backup';
 
 import Header from './components/Header';
 import BetModeTabs from './components/BetModeTabs';
@@ -27,7 +28,7 @@ function loadLS(key, def) {
 function saveLS(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
 
 export default function App() {
-  const { spins, addSpin, undoLast, resetSession } = useSpins();
+  const { spins, addSpin, undoLast, resetSession, replaceSpins } = useSpins();
 
   const [mode, setMode]         = useState(() => loadLS(LS_MODE, 'history'));
   const [betMode, setBetMode]   = useState(() => loadLS(LS_BETMODE, 'numbers'));
@@ -54,10 +55,14 @@ export default function App() {
     [betMode, predictedSet, settings.payout]
   );
 
-  const dose = useMemo(
+  const wantedDose = useMemo(
     () => computeDose(totalYield, settings.baseBet, betN, betPayout),
     [totalYield, settings.baseBet, betN, betPayout]
   );
+  const bankrollLeft  = settings.bankroll + totalYield;
+  const dose          = affordableDose(wantedDose, bankrollLeft, betN);
+  const hasPrediction = predictedSet.size > 0;
+  const canBet        = hasPrediction && dose > 0;
 
   // ── Per-mode stats ─────────────────────────────────────────────────────────────
   const allStats = useMemo(() => {
@@ -67,14 +72,27 @@ export default function App() {
 
   // ── Spin handler ──────────────────────────────────────────────────────────────
   const handleSpin = useCallback((number) => {
-    if (mode === 'history') {
-      addSpin({ number, mode: 'history', betMode });
+    // No prediction yet or no bankroll left: record the number without a bet
+    if (mode !== 'live' || !canBet) {
+      addSpin({ number, mode, betMode });
       return;
     }
     const isHit = predictedSet.has(number);
     const net   = computeNet(isHit, dose, betN, betPayout);
     addSpin({ number, win: isHit, net, dose, predicted: [...predictedSet], mode: 'live', betMode });
-  }, [mode, addSpin, betMode, predictedSet, dose, betN, betPayout]);
+  }, [mode, canBet, addSpin, betMode, predictedSet, dose, betN, betPayout]);
+
+  const handleExport = useCallback(() => downloadSpins(spins), [spins]);
+
+  const handleImport = useCallback(async (file) => {
+    try {
+      const list = parseSpins(await file.text());
+      if (!window.confirm(`Replace your ${spins.length} saved spins with the ${list.length} in this file?`)) return;
+      replaceSpins(list);
+    } catch (e) {
+      window.alert(e.message);
+    }
+  }, [spins.length, replaceSpins]);
 
   const lastNumber = spins.length ? spins[spins.length - 1].number : null;
 
@@ -86,16 +104,20 @@ export default function App() {
     : <NumberGrid predictedSet={predictedSet} lastNumber={lastNumber} onSpin={handleSpin} />;
 
   return (
-    <div className="min-h-screen bg-bg flex flex-col">
-      <Header mode={mode} onToggleMode={setMode} />
-      <BetModeTabs active={betMode} onChange={setBetMode} />
+    <div className="min-h-screen flex flex-col">
+      <div className="sticky top-0 z-30 bg-bg/80 backdrop-blur-md border-b border-white/[0.06]">
+        <Header mode={mode} onToggleMode={setMode} />
+        <BetModeTabs active={betMode} onChange={setBetMode} />
+      </div>
 
       <main className="flex-1 p-3 sm:p-4">
         <div className="max-w-7xl mx-auto flex gap-4">
 
           {/* ── Main column ── */}
-          <div className="flex-1 min-w-0 space-y-3">
+          <div className="flex-1 min-w-0 space-y-3 sm:space-y-4">
             {entrySurface}
+
+            <RecentSpins spins={spins} />
 
             <PredictionBar
               predResult={predResult}
@@ -103,13 +125,12 @@ export default function App() {
               spinCount={spins.length}
             />
 
-            <RecentSpins spins={spins} />
-
             <BloodMoneyPanel
               dose={dose}
+              wantedDose={wantedDose}
+              hasPrediction={hasPrediction}
               totalYield={totalYield}
               bankroll={settings.bankroll}
-              baseBet={settings.baseBet}
               n={betN}
               payout={betPayout}
               mode={mode}
@@ -126,6 +147,8 @@ export default function App() {
               totalSpins={spins.length}
               onUndo={undoLast}
               onReset={resetSession}
+              onExport={handleExport}
+              onImport={handleImport}
             />
             <SignalCalibration weights={weights} spinCount={spins.length} />
           </div>
@@ -139,6 +162,8 @@ export default function App() {
             totalSpins={spins.length}
             onUndo={undoLast}
             onReset={resetSession}
+            onExport={handleExport}
+            onImport={handleImport}
           />
           <SignalCalibration weights={weights} spinCount={spins.length} />
         </div>
