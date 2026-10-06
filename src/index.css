@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    background-color: #0a0a0a;
+    color: #e8e8e8;
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: #111214; }
+  ::-webkit-scrollbar-thumb { background: #26262a; border-radius: 2px; }
+}
+
+@layer components {
+  .panel {
+    @apply bg-panel border border-border rounded-lg;
+  }
+
+  .btn-ghost {
+    @apply px-3 py-1.5 rounded text-sm font-medium tracking-wide2
+           border border-border text-label
+           hover:border-gold hover:text-gold transition-colors;
+  }
+
+  .btn-gold {
+    @apply px-4 py-2 rounded text-sm font-semibold tracking-wide2 uppercase
+           bg-gold text-bg hover:bg-gold-dim transition-colors;
+  }
+
+  .pocket-base {
+    @apply flex items-center justify-center font-mono font-bold
+           cursor-pointer select-none transition-all duration-150
+           border-2 border-transparent;
+  }
+
+  .pocket-red {
+    @apply bg-pocket-red text-white;
+  }
+  .pocket-black {
+    @apply bg-pocket-black text-white border border-border;
+  }
+  .pocket-green {
+    @apply bg-pocket-green text-white;
+  }
+
+  .predicted-ring {
+    @apply border-2 border-gold shadow-[0_0_8px_rgba(230,180,80,0.6)];
+  }
+
+  .last-ring {
+    @apply border-2 border-[#e8e8e8] shadow-[0_0_6px_rgba(232,232,232,0.5)];
+  }
+
+  .section-label {
+    @apply text-[10px] font-semibold tracking-wide3 uppercase text-label mb-2;
+  }
+}
+
+/* Felt texture overlay */
+.felt-surface {
+  background: linear-gradient(135deg, #1e8a4e 0%, #0f4d2e 100%);
+  background-image:
+    linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 50%),
+    linear-gradient(135deg, #1e8a4e 0%, #0f4d2e 100%);
+}
+
+/* Pulse animation for header dot */
+@keyframes pulse-red {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.pulse-red { animation: pulse-red 1.8s ease-in-out infinite; }
+
+/* Number chip color-coded */
+.chip-red { @apply bg-pocket-red text-white; }
+.chip-black { @apply bg-pocket-black text-white border border-border; }
+.chip-green { @apply bg-pocket-green text-white; }
