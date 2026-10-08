@@ -34,9 +34,11 @@ const H_CAP  = { width: 28, height: 28, flexShrink: 0 };
 const V_RAIL = { width: 32, flex: '1 1 0', minHeight: 28 };
 const V_CAP  = { width: 32, height: 32, flexShrink: 0 };
 
+// A pick always shows its gold ring; if it is also the last result, a white ring sits around the gold
 function pocketRing(isLast, isPredicted) {
-  if (isLast)      return { outline: '2px solid #e8e8e8', outlineOffset: '1px', boxShadow: '0 0 6px rgba(232,232,232,0.5)' };
+  if (isPredicted && isLast) return { outline: '2px solid #e6b450', outlineOffset: '1px', boxShadow: '0 0 0 4px #0c2e14, 0 0 0 6px #e8e8e8' };
   if (isPredicted) return { outline: '2px solid #e6b450', outlineOffset: '1px', boxShadow: '0 0 8px rgba(230,180,80,0.65)' };
+  if (isLast)      return { outline: '2px solid #e8e8e8', outlineOffset: '1px', boxShadow: '0 0 6px rgba(232,232,232,0.5)' };
   return {};
 }
 

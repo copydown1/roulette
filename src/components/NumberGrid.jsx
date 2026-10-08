@@ -1,4 +1,5 @@
 import { getColor } from '../lib/prediction';
+import { pocketRingClass } from '../lib/pocketRing';
 
 // Standard casino felt layout (horizontal / desktop)
 const TOP_ROW = [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36];
@@ -17,9 +18,7 @@ function Pocket({ n, isPredicted, isLast, onClick }) {
   const bg = c === 'red'   ? 'bg-pocket-red hover:bg-red-700'
            : c === 'black' ? 'bg-pocket-black hover:bg-zinc-700 border border-zinc-700'
            : 'bg-pocket-green hover:bg-green-700';
-  const ring = isLast      ? 'ring-2 ring-[#e8e8e8] shadow-[0_0_6px_rgba(232,232,232,0.5)]'
-             : isPredicted ? 'ring-2 ring-gold shadow-[0_0_8px_rgba(230,180,80,0.5)]'
-             : '';
+  const ring = pocketRingClass(isLast, isPredicted);
   return (
     <button
       onClick={() => onClick(n)}
@@ -31,11 +30,7 @@ function Pocket({ n, isPredicted, isLast, onClick }) {
 }
 
 export default function NumberGrid({ predictedSet, lastNumber, onSpin }) {
-  const zeroRing = lastNumber === 0
-    ? 'ring-2 ring-[#e8e8e8] shadow-[0_0_6px_rgba(232,232,232,0.5)]'
-    : predictedSet.has(0)
-    ? 'ring-2 ring-gold shadow-[0_0_8px_rgba(230,180,80,0.5)]'
-    : '';
+  const zeroRing = pocketRingClass(lastNumber === 0, predictedSet.has(0));
 
   return (
     <div className="panel p-3">

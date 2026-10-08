@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
 import { getColor, DOZENS, COLUMNS } from '../lib/prediction';
+import { pocketRingClass } from '../lib/pocketRing';
 
 // Horizontal desktop layout rows
 const TOP_ROW = [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36];
@@ -21,9 +22,7 @@ function Pocket({ n, isPredicted, isLast, onClick }) {
   const bg = c === 'red'   ? 'bg-pocket-red hover:bg-red-700'
            : c === 'black' ? 'bg-[#1a1a1a] hover:bg-zinc-700 border border-zinc-700'
            : 'bg-pocket-green hover:bg-green-700';
-  const ring = isLast      ? 'ring-2 ring-[#e8e8e8] shadow-[0_0_6px_rgba(232,232,232,0.5)]'
-             : isPredicted ? 'ring-2 ring-gold shadow-[0_0_8px_rgba(230,180,80,0.5)]'
-             : '';
+  const ring = pocketRingClass(isLast, isPredicted);
   return (
     <button
       onClick={() => onClick(n)}
@@ -48,9 +47,7 @@ export default function RouletteTable({ predictedSet, lastNumber, onSpin, betMod
   // Vertical layout passes the column object itself
   const colRingByCol = col => ring(betMode === 'columns' && chosen.has(col.label));
 
-  const zeroRing = lastNumber === 0
-    ? 'ring-2 ring-[#e8e8e8]'
-    : predictedSet.has(0) ? 'ring-2 ring-gold' : '';
+  const zeroRing = pocketRingClass(lastNumber === 0, predictedSet.has(0));
 
   // Maps vertical row index to dozen index (strip shown after rows 3, 7, 11)
   const DOZEN_STRIP = { 3: 0, 7: 1, 11: 2 };
